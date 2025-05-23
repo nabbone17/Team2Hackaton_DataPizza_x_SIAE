@@ -1,36 +1,38 @@
-#!/usr/bin/env python3
-"""
-Sistema Interattivo per Competizione Accertatori
-================================================
-
-Permette di far competere più accertatori con strategie diverse
-e di confrontare i loro risultati.
-"""
-
 import pandas as pd
-import numpy as np
-from typing import List, Dict, Tuple
+from typing import List
 import random
 import json
 from tax_inspector_competition import CompetitionSimulator, DayRoute, POI
 import matplotlib.pyplot as plt
-import seaborn as sns
+import os
+
+# Importa le funzioni per starting points da coordinate
+try:
+    from csv_starting_points import (
+        load_starting_points_from_coordinates_csv,
+        create_competition_with_coordinate_starting_points,
+        create_example_coordinates_csv
+    )
+    CSV_STARTING_POINTS_AVAILABLE = True
+except ImportError:
+    print("csv_starting_points.py non trovato, usando solo starting points casuali")
+    CSV_STARTING_POINTS_AVAILABLE = False
 
 class Inspector:
-    """Rappresenta un accertatore con la sua strategia"""
+    """Rappresenta un accertatore che utilizza la strategia high_value"""
     
-    def __init__(self, name: str, strategy: str = 'greedy', seed: int = None):
+    def __init__(self, name: str, seed: int = None):
         self.name = name
-        self.strategy = strategy
+        self.strategy = 'high_value'
         self.seed = seed
         self.total_earnings = 0.0
         self.day_routes = []
         
     def __str__(self):
-        return f"Accertatore {self.name} (Strategia: {self.strategy})"
+        return f"Accertatore {self.name} (Strategia: High Value)"
 
 class MultiInspectorCompetition:
-    """Gestisce una competizione tra più accertatori"""
+    """Gestisce una competizione tra più accertatori che usano la strategia high_value"""
     
     def __init__(self, dataset_path: str):
         self.simulator = CompetitionSimulator(dataset_path)
@@ -38,9 +40,9 @@ class MultiInspectorCompetition:
         self.competition_results = {}
         self.fixed_starting_points = None
         
-    def add_inspector(self, name: str, strategy: str = 'greedy', seed: int = None):
+    def add_inspector(self, name: str, seed: int = None):
         """Aggiunge un accertatore alla competizione"""
-        inspector = Inspector(name, strategy, seed)
+        inspector = Inspector(name, seed)
         self.inspectors.append(inspector)
         print(f"Aggiunto {inspector}")
         
@@ -58,15 +60,15 @@ class MultiInspectorCompetition:
             print(f"  Giorno {i}: {point.poi_type} in {point.jurisdiction} (ID: {point.id})")
     
     def run_competition(self, num_days: int = 5):
-        """Esegue la competizione per tutti gli accertatori"""
+        """Esegue la competizione per tutti gli accertatori usando la strategia high_value"""
         if not self.fixed_starting_points:
             self.set_fixed_starting_points()
             
-        print(f"\nINIZIO COMPETIZIONE CON {len(self.inspectors)} ACCERTATORI")
-        print("="*60)
+        print(f"\nINIZIO COMPETIZIONE CON {len(self.inspectors)} ACCERTATORI (Strategia High Value)")
+        print("="*70)
         
         for inspector in self.inspectors:
-            print(f"\nSimulazione per {inspector.name} ({inspector.strategy})")
+            print(f"\nSimulazione per {inspector.name}")
             
             # Imposta seed se specificato
             if inspector.seed:
@@ -88,21 +90,12 @@ class MultiInspectorCompetition:
             print(f"Totale raccolto: €{inspector.total_earnings:.2f}")
     
     def _simulate_with_fixed_points(self, inspector: Inspector, starting_points: List[POI]) -> List[DayRoute]:
-        """Simula la competizione con punti di partenza fissi"""
+        """Simula la competizione con punti di partenza fissi usando la strategia high_value"""
         day_routes = []
         
         for day, starting_point in enumerate(starting_points, 1):
-            # Ottimizza il percorso secondo la strategia dell'accertatore
-            if inspector.strategy == 'genetic':
-                optimal_pois = self.simulator.optimizer.optimize_route_genetic(starting_point)
-            elif inspector.strategy == 'greedy':
-                optimal_pois = self.simulator.optimizer.optimize_route_greedy(starting_point)
-            elif inspector.strategy == 'random':
-                optimal_pois = self._random_strategy(starting_point)
-            elif inspector.strategy == 'high_value':
-                optimal_pois = self._high_value_strategy(starting_point)
-            else:
-                optimal_pois = self.simulator.optimizer.optimize_route_greedy(starting_point)
+            # Ottimizza il percorso usando la strategia high_value
+            optimal_pois = self.simulator.optimizer.optimize_route_high_value(starting_point)
             
             # Calcola metriche del percorso
             distance, time, fee = self.simulator.optimizer.calculate_route_metrics(starting_point, optimal_pois)
@@ -121,40 +114,6 @@ class MultiInspectorCompetition:
         
         return day_routes
     
-    def _random_strategy(self, starting_point: POI) -> List[POI]:
-        """Strategia casuale (per confronto)"""
-        jurisdiction_pois = self.simulator.optimizer.jurisdictions.get(starting_point.jurisdiction, [])
-        available_pois = [poi for poi in jurisdiction_pois if poi.id != starting_point.id]
-        
-        # Seleziona POIs casuali che rispettano i vincoli
-        max_attempts = 100
-        for _ in range(max_attempts):
-            num_pois = random.randint(1, min(8, len(available_pois)))
-            random_pois = random.sample(available_pois, num_pois)
-            
-            if self.simulator.optimizer.is_valid_route(starting_point, random_pois):
-                return random_pois
-        
-        return []
-    
-    def _high_value_strategy(self, starting_point: POI) -> List[POI]:
-        """Strategia che privilegia POIs con valore alto"""
-        jurisdiction_pois = self.simulator.optimizer.jurisdictions.get(starting_point.jurisdiction, [])
-        available_pois = [poi for poi in jurisdiction_pois if poi.id != starting_point.id]
-        
-        # Ordina per valore decrescente
-        available_pois.sort(key=lambda poi: poi.fee_value, reverse=True)
-        
-        # Prova ad aggiungere POIs in ordine di valore
-        selected_pois = []
-        for poi in available_pois:
-            test_route = selected_pois + [poi]
-            if (len(test_route) <= 8 and 
-                self.simulator.optimizer.is_valid_route(starting_point, test_route)):
-                selected_pois.append(poi)
-        
-        return selected_pois
-    
     def print_competition_results(self):
         """Stampa i risultati della competizione"""
         if not self.competition_results:
@@ -162,7 +121,7 @@ class MultiInspectorCompetition:
             return
             
         print("\n" + "="*70)
-        print("RISULTATI FINALI DELLA COMPETIZIONE")
+        print("RISULTATI FINALI DELLA COMPETIZIONE (Strategia High Value)")
         print("="*70)
         
         # Ordina per guadagni totali
@@ -175,7 +134,7 @@ class MultiInspectorCompetition:
         print(f"\nCLASSIFICA FINALE:")
         for i, result in enumerate(sorted_results, 1):
             inspector = result['inspector']
-            print(f"{inspector.name} ({inspector.strategy}): €{result['total_earnings']:.2f}")  
+            print(f"{i}. {inspector.name}: €{result['total_earnings']:.2f}")  
         
         # Dettagli per ogni accertatore
         print(f"\nDETTAGLI PER ACCERTATORE:")
@@ -183,7 +142,7 @@ class MultiInspectorCompetition:
             inspector = result['inspector']
             routes = result['day_routes']
             
-            print(f"\n{inspector.name} ({inspector.strategy}):")
+            print(f"\n{inspector.name}:")
             print(f"   Totale: €{result['total_earnings']:.2f}")
             print(f"   POIs visitati: {sum(len(route.visited_pois) for route in routes)}")
             print(f"   Distanza totale: {sum(route.total_distance_km for route in routes):.2f} km")
@@ -200,6 +159,7 @@ class MultiInspectorCompetition:
         """Genera un report dettagliato in formato JSON"""
         report = {
             'competition_date': pd.Timestamp.now().isoformat(),
+            'strategy_used': 'high_value',
             'total_inspectors': len(self.inspectors),
             'starting_points': [
                 {
@@ -217,7 +177,7 @@ class MultiInspectorCompetition:
         
         for name, result in self.competition_results.items():
             inspector_data = {
-                'strategy': result['strategy'],
+                'strategy': 'high_value',
                 'total_earnings': result['total_earnings'],
                 'daily_results': []
             }
@@ -254,7 +214,6 @@ class MultiInspectorCompetition:
     
     def create_comparison_charts(self, output_dir: str = 'charts'):
         """Crea grafici di confronto tra accertatori"""
-        import os
         os.makedirs(output_dir, exist_ok=True)
         
         if not self.competition_results:
@@ -268,7 +227,6 @@ class MultiInspectorCompetition:
         for name, result in self.competition_results.items():
             inspectors_data.append({
                 'name': name,
-                'strategy': result['strategy'],
                 'total_earnings': result['total_earnings'],
                 'total_pois': sum(len(route.visited_pois) for route in result['day_routes']),
                 'total_distance': sum(route.total_distance_km for route in result['day_routes']),
@@ -278,7 +236,6 @@ class MultiInspectorCompetition:
             for route in result['day_routes']:
                 daily_data.append({
                     'inspector': name,
-                    'strategy': result['strategy'],
                     'day': route.day,
                     'earnings': route.total_fee_collected,
                     'pois': len(route.visited_pois),
@@ -293,7 +250,7 @@ class MultiInspectorCompetition:
         plt.figure(figsize=(12, 6))
         bars = plt.bar(df_inspectors['name'], df_inspectors['total_earnings'], 
                       color=plt.cm.Set3(range(len(df_inspectors))))
-        plt.title('Totale raccolto per Accertatore', fontsize=16, fontweight='bold')
+        plt.title('Totale raccolto per Accertatore (Strategia High Value)', fontsize=16, fontweight='bold')
         plt.xlabel('Accertatore')
         plt.ylabel('Totale raccolto (€)')
         plt.xticks(rotation=45)
@@ -310,12 +267,12 @@ class MultiInspectorCompetition:
         
         # Grafico 2: Performance giornaliera
         plt.figure(figsize=(14, 8))
-        for strategy in df_daily['strategy'].unique():
-            strategy_data = df_daily[df_daily['strategy'] == strategy]
-            plt.plot(strategy_data['day'], strategy_data['earnings'], 
-                    marker='o', linewidth=2, label=f'Strategia: {strategy}')
+        for inspector in df_daily['inspector'].unique():
+            inspector_data = df_daily[df_daily['inspector'] == inspector]
+            plt.plot(inspector_data['day'], inspector_data['earnings'], 
+                    marker='o', linewidth=2, label=inspector)
         
-        plt.title('Performance Giornaliera per Strategia', fontsize=16, fontweight='bold')
+        plt.title('Performance Giornaliera per Accertatore (Strategia High Value)', fontsize=16, fontweight='bold')
         plt.xlabel('Giorno')
         plt.ylabel('Raccolto (€)')
         plt.legend()
@@ -329,7 +286,7 @@ class MultiInspectorCompetition:
         efficiency_by_inspector = df_daily.groupby('inspector')['efficiency'].mean()
         bars = plt.bar(efficiency_by_inspector.index, efficiency_by_inspector.values,
                       color=plt.cm.Pastel1(range(len(efficiency_by_inspector))))
-        plt.title('Efficienza Media (€/ora) per Accertatore', fontsize=16, fontweight='bold')
+        plt.title('Efficienza Media (€/ora) per Accertatore (Strategia High Value)', fontsize=16, fontweight='bold')
         plt.xlabel('Accertatore')
         plt.ylabel('€/ora')
         plt.xticks(rotation=45)
@@ -343,46 +300,162 @@ class MultiInspectorCompetition:
         plt.savefig(f'{output_dir}/efficiency.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"📊 Grafici salvati in '{output_dir}/'")
+        print(f"Grafici salvati in '{output_dir}/'")
 
 def setup_sample_competition():
-    """Configura una competizione di esempio"""
+    """Configura una competizione di esempio con più accertatori usando strategia high_value"""
     competition = MultiInspectorCompetition('dataset.csv')
     
-    # Aggiunge diversi accertatori con strategie diverse
-    competition.add_inspector("Mario Greedy", "greedy", seed=42)
-    competition.add_inspector("Luigi Genetico", "genetic", seed=123)
-    competition.add_inspector("Peach Casuale", "random", seed=456)
-    competition.add_inspector("Bowser Avido", "high_value", seed=789)
-    
+    # Aggiunge diversi accertatori con seed diversi per variabilità
+    competition.add_inspector("Accertatore 1", seed=42)
+    competition.add_inspector("Accertatore 2", seed=123)
+    competition.add_inspector("Accertatore 3", seed=456)
+    competition.add_inspector("Accertatore 4", seed=789)
+    competition.add_inspector("Accertatore 5", seed=999)
+
     return competition
 
-def main():
-    """Funzione principale per la competizione interattiva"""
-    print("COMPETIZIONE INTERATTIVA ACCERTATORI SIAE")
-    print("="*55)
+def setup_competition_with_csv_starting_points(starting_points_csv: str = None):
+    """Configura una competizione con punti di partenza da CSV"""
+    
+    if not CSV_STARTING_POINTS_AVAILABLE:
+        print("Sistema starting points da CSV non disponibile")
+        return setup_sample_competition()
+    
+    # Se non specificato, cerca file predefiniti
+    if starting_points_csv is None:
+        # Lista di file CSV da cercare in ordine di priorità
+        default_csv_files = [
+            'starting_coordinates.csv',
+            'starting_coordinates_example.csv',
+            'custom_coordinates.csv'
+        ]
+        
+        for csv_file in default_csv_files:
+            if os.path.exists(csv_file):
+                starting_points_csv = csv_file
+                print(f"Trovato file starting points: {csv_file}")
+                break
+    
+    if starting_points_csv and os.path.exists(starting_points_csv):
+        # Usa starting points da CSV
+        print(f"Caricamento starting points da CSV: {starting_points_csv}")
+        
+        competition = create_competition_with_coordinate_starting_points(
+            dataset_path='dataset.csv',
+            coordinates_csv_path=starting_points_csv,
+            poi_type='custom_starting_point'
+        )
+        
+        if competition:
+            # Aggiunge accertatori con seed diversi
+            competition.add_inspector("High Value Master", seed=42)
+            competition.add_inspector("Value Hunter Pro", seed=123)
+            competition.add_inspector("Premium Collector", seed=456)
+            competition.add_inspector("Elite Gatherer", seed=789)
+            competition.add_inspector("Top Value Seeker", seed=999)
+            
+            return competition
+        else:
+            print("Errore nel caricamento CSV, uso starting points casuali")
+    
+    # Fallback a starting points casuali
+    print("🎲 Uso starting points casuali")
+    return setup_sample_competition()
+
+def main(starting_points_csv: str = None):
+    """
+    Funzione principale per la competizione interattiva usando strategia high_value
+    
+    Args:
+        starting_points_csv: Percorso del file CSV con starting points (opzionale)
+    """
+    print("COMPETIZIONE INTERATTIVA ACCERTATORI SIAE (Strategia High Value)")
+    print("="*65)
+    
+    # Controlla se il sistema CSV è disponibile
+    if CSV_STARTING_POINTS_AVAILABLE:
+        print("Sistema starting points da CSV disponibile")
+        
+        # Se non specificato file CSV, crea un esempio se non esiste
+        if starting_points_csv is None and not any(os.path.exists(f) for f in [
+            'starting_coordinates.csv', 'starting_coordinates_example.csv', 'custom_coordinates.csv'
+        ]):
+            print("📝 Creazione file di esempio per starting points...")
+            create_example_coordinates_csv()
+    else:
+        print("Sistema starting points da CSV non disponibile")
     
     # Setup competizione
-    competition = setup_sample_competition()
+    print(f"\nConfigurazione competizione...")
+    if CSV_STARTING_POINTS_AVAILABLE:
+        competition = setup_competition_with_csv_starting_points(starting_points_csv)
+    else:
+        competition = setup_sample_competition()
+    
+    if not competition:
+        print("Impossibile creare competizione, termino.")
+        return
+    
+    # Mostra configurazione
+    print(f"\nConfigurazione:")
+    print(f"   - Strategia utilizzata: High Value")
+    print(f"   - Accertatori: {len(competition.inspectors)}")
+    
+    if hasattr(competition, 'fixed_starting_points') and competition.fixed_starting_points:
+        print(f"   - Starting points: PERSONALIZZATI da CSV")
+        print(f"   - Distribuzione giurisdizioni:")
+        jurisdiction_counts = {}
+        for poi in competition.fixed_starting_points:
+            jurisdiction_counts[poi.jurisdiction] = jurisdiction_counts.get(poi.jurisdiction, 0) + 1
+        for jurisdiction, count in sorted(jurisdiction_counts.items()):
+            print(f"     * {jurisdiction}: {count} giorni")
+    else:
+        print(f"   - Starting points: CASUALI")
     
     # Esegui competizione
+    print(f"\nEsecuzione competizione...")
     competition.run_competition(num_days=5)
     
     # Mostra risultati
+    print(f"\n" + "="*60)
     competition.print_competition_results()
     
     # Genera report e grafici
-    competition.generate_detailed_report()
+    print(f"\nGenerazione report...")
+    competition.generate_detailed_report('competition_report.json')
+
     try:
         competition.create_comparison_charts()
+        print("Grafici di confronto creati")
     except ImportError:
         print("Matplotlib non disponibile, salto la creazione dei grafici")
+    except Exception as e:
+        print(f"Errore nella creazione grafici: {e}")
     
     # Statistiche finali
     winner = max(competition.competition_results.values(), key=lambda x: x['total_earnings'])
     print(f"\nVINCITORE: {winner['inspector'].name} con €{winner['total_earnings']:.2f}!")
     
+    # Analisi performance
+    print(f"\nAnalisi Performance (Strategia High Value):")
+    earnings_list = [result['total_earnings'] for result in competition.competition_results.values()]
+    avg_earnings = sum(earnings_list) / len(earnings_list)
+    max_earnings = max(earnings_list)
+    min_earnings = min(earnings_list)
+    
+    print(f"   - Media guadagni: €{avg_earnings:.2f}")
+    print(f"   - Massimo guadagno: €{max_earnings:.2f}")
+    print(f"   - Minimo guadagno: €{min_earnings:.2f}")
+    print(f"   - Differenza max-min: €{max_earnings - min_earnings:.2f}")
+    
     print(f"\nCompetizione completata!")
+    print(f"\nFile generati:")
+    print(f"   - competition_report.json")
+    if os.path.exists('charts'):
+        print(f"   - charts/ (grafici di confronto)")
+    if starting_points_csv and os.path.exists(starting_points_csv):
+        print(f"   - {starting_points_csv} (starting points utilizzati)")
 
 if __name__ == "__main__":
-    main() 
+    main()

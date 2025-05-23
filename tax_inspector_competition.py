@@ -1,27 +1,7 @@
-#!/usr/bin/env python3
-"""
-Sistema di Competizione per Accertatori Fiscali
-================================================
-
-Simula una competizione di 5 giornate dove gli accertatori devono ottimizzare
-i loro percorsi per massimizzare il profitto raccolto dai POIs, rispettando
-vari vincoli temporali e territoriali.
-
-Vincoli:
-- 3 ore massime per giornata
-- Massimo 8 POIs per giornata
-- 5 minuti per fermata
-- Solo una giurisdizione per giornata
-- Ritorno al punto di partenza obbligatorio
-- Spostamento a piedi
-"""
-
 import pandas as pd
-import numpy as np
 import math
 from typing import List, Tuple, Dict
 from dataclasses import dataclass
-from itertools import combinations
 import random
 
 @dataclass
@@ -81,7 +61,7 @@ class DistanceCalculator:
         return (distance_km / walking_speed_kmh) * 60
 
 class RouteOptimizer:
-    """Ottimizza i percorsi per massimizzare il profitto"""
+    """Ottimizza i percorsi utilizzando la strategia high_value"""
     
     def __init__(self, pois: List[POI]):
         self.pois = pois
@@ -150,173 +130,30 @@ class RouteOptimizer:
         _, total_time, _ = self.calculate_route_metrics(starting_point, route_pois)
         return total_time <= max_time_minutes
     
-    def optimize_route_greedy(self, starting_point: POI, max_time_minutes: int = 180, 
-                             max_pois: int = 8) -> List[POI]:
+    def optimize_route_high_value(self, starting_point: POI, max_time_minutes: int = 180, 
+                                 max_pois: int = 8) -> List[POI]:
         """
-        Algoritmo greedy per ottimizzazione del percorso:
-        Seleziona sempre il POI più vicino con il miglior rapporto valore/tempo
+        Strategia che privilegia POIs con valore alto
+        Ordina i POIs per valore decrescente e li aggiunge se rispettano i vincoli
         """
         jurisdiction_pois = self.jurisdictions.get(starting_point.jurisdiction, [])
         available_pois = [poi for poi in jurisdiction_pois if poi.id != starting_point.id]
         
-        selected_pois = []
-        current_pos = starting_point
+        # Ordina per valore decrescente
+        available_pois.sort(key=lambda poi: poi.fee_value, reverse=True)
         
-        while len(selected_pois) < max_pois and available_pois:
-            best_poi = None
-            best_score = -1
-            
-            for poi in available_pois:
-                # Testa se aggiungere questo POI è valido
-                test_route = selected_pois + [poi]
-                if not self.is_valid_route(starting_point, test_route, max_time_minutes, max_pois):
-                    continue
-                
-                # Calcola score (valore/tempo)
-                distance = self.distance_calc.haversine_distance(
-                    current_pos.lat, current_pos.lon, poi.lat, poi.lon
-                )
-                travel_time = self.distance_calc.walking_time_minutes(distance) + 5
-                
-                if travel_time > 0:
-                    score = poi.fee_value / travel_time
-                    if score > best_score:
-                        best_score = score
-                        best_poi = poi
-            
-            if best_poi is None:
-                break
-                
-            selected_pois.append(best_poi)
-            available_pois.remove(best_poi)
-            current_pos = best_poi
+        # Prova ad aggiungere POIs in ordine di valore
+        selected_pois = []
+        for poi in available_pois:
+            test_route = selected_pois + [poi]
+            if (len(test_route) <= max_pois and 
+                self.is_valid_route(starting_point, test_route, max_time_minutes, max_pois)):
+                selected_pois.append(poi)
         
         return selected_pois
-    
-    def optimize_route_genetic(self, starting_point: POI, max_time_minutes: int = 180, 
-                              max_pois: int = 8, generations: int = 100) -> List[POI]:
-        """
-        Algoritmo genetico per ottimizzazione del percorso (più sofisticato)
-        """
-        jurisdiction_pois = self.jurisdictions.get(starting_point.jurisdiction, [])
-        available_pois = [poi for poi in jurisdiction_pois if poi.id != starting_point.id]
-        
-        if len(available_pois) <= max_pois:
-            # Se abbiamo pochi POIs, testa tutte le combinazioni valide
-            return self._brute_force_optimization(starting_point, available_pois, max_time_minutes, max_pois)
-        
-        # Implementazione semplificata dell'algoritmo genetico
-        population_size = min(50, len(available_pois) * 2)
-        population = []
-        
-        # Crea popolazione iniziale
-        for _ in range(population_size):
-            route_size = random.randint(1, min(max_pois, len(available_pois)))
-            route = random.sample(available_pois, route_size)
-            if self.is_valid_route(starting_point, route, max_time_minutes, max_pois):
-                population.append(route)
-        
-        # Se non ci sono route valide, usa greedy
-        if not population:
-            return self.optimize_route_greedy(starting_point, max_time_minutes, max_pois)
-        
-        # Evoluzione
-        for generation in range(generations):
-            # Valuta fitness
-            fitness_scores = []
-            for route in population:
-                _, _, fee = self.calculate_route_metrics(starting_point, route)
-                fitness_scores.append(fee)
-            
-            # Selezione migliori
-            sorted_indices = sorted(range(len(population)), key=lambda i: fitness_scores[i], reverse=True)
-            elite_size = max(1, population_size // 4)
-            elite = [population[i] for i in sorted_indices[:elite_size]]
-            
-            # Crea nuova popolazione
-            new_population = elite[:]
-            
-            while len(new_population) < population_size:
-                # Crossover
-                parent1, parent2 = random.sample(elite, 2)
-                child = self._crossover(parent1, parent2)
-                
-                # Mutazione
-                if random.random() < 0.1:
-                    child = self._mutate(child, available_pois)
-                
-                if self.is_valid_route(starting_point, child, max_time_minutes, max_pois):
-                    new_population.append(child)
-                elif len(new_population) < population_size:
-                    # Se il figlio non è valido, aggiungi un genitore
-                    new_population.append(random.choice(elite))
-            
-            population = new_population
-        
-        # Restituisci la migliore route
-        best_route = max(population, key=lambda route: self.calculate_route_metrics(starting_point, route)[2])
-        return best_route
-    
-    def _brute_force_optimization(self, starting_point: POI, available_pois: List[POI], 
-                                 max_time_minutes: int, max_pois: int) -> List[POI]:
-        """Forza bruta per piccoli insiemi di POIs"""
-        best_route = []
-        best_fee = 0
-        
-        for r in range(1, min(max_pois + 1, len(available_pois) + 1)):
-            for combo in combinations(available_pois, r):
-                route = list(combo)
-                if self.is_valid_route(starting_point, route, max_time_minutes, max_pois):
-                    _, _, fee = self.calculate_route_metrics(starting_point, route)
-                    if fee > best_fee:
-                        best_fee = fee
-                        best_route = route
-        
-        return best_route
-    
-    def _crossover(self, parent1: List[POI], parent2: List[POI]) -> List[POI]:
-        """Crossover genetico tra due percorsi"""
-        # Usa gli ID dei POI per evitare problemi di hashing
-        all_poi_ids = set([poi.id for poi in parent1] + [poi.id for poi in parent2])
-        
-        # Crea un dizionario per accesso rapido agli oggetti POI
-        poi_dict = {}
-        for poi in parent1 + parent2:
-            poi_dict[poi.id] = poi
-        
-        # Seleziona POI casuali per il figlio
-        child_size = random.randint(1, min(8, len(all_poi_ids)))
-        selected_ids = random.sample(list(all_poi_ids), child_size)
-        
-        return [poi_dict[poi_id] for poi_id in selected_ids]
-    
-    def _mutate(self, route: List[POI], available_pois: List[POI]) -> List[POI]:
-        """Mutazione genetica di un percorso"""
-        if not route:
-            return route
-            
-        # Crea una copia della route per evitare modifiche indesiderate
-        route = route.copy()
-        mutation_type = random.choice(['add', 'remove', 'replace'])
-        
-        if mutation_type == 'add' and len(route) < 8:
-            route_ids = {poi.id for poi in route}
-            unused_pois = [poi for poi in available_pois if poi.id not in route_ids]
-            if unused_pois:
-                route.append(random.choice(unused_pois))
-        elif mutation_type == 'remove' and len(route) > 1:
-            route.pop(random.randint(0, len(route) - 1))
-        elif mutation_type == 'replace' and route:
-            route_ids = {poi.id for poi in route}
-            unused_pois = [poi for poi in available_pois if poi.id not in route_ids]
-            if unused_pois:
-                idx = random.randint(0, len(route) - 1)
-                route[idx] = random.choice(unused_pois)
-        
-        return route
 
 class CompetitionSimulator:
-    """Simula la competizione degli accertatori"""
+    """Simula la competizione degli accertatori usando la strategia high_value"""
     
     def __init__(self, dataset_path: str):
         self.pois = self._load_pois(dataset_path)
@@ -356,10 +193,9 @@ class CompetitionSimulator:
         
         return starting_points
     
-    def simulate_inspector_competition(self, num_days: int = 5, 
-                                     optimization_method: str = 'greedy') -> List[DayRoute]:
+    def simulate_inspector_competition(self, num_days: int = 5) -> List[DayRoute]:
         """
-        Simula la competizione di un accertatore per tutte le giornate
+        Simula la competizione di un accertatore per tutte le giornate usando la strategia high_value
         """
         starting_points = self.get_random_starting_points(num_days)
         day_routes = []
@@ -370,11 +206,8 @@ class CompetitionSimulator:
             print(f"Giurisdizione: {starting_point.jurisdiction}")
             print(f"Coordinate: ({starting_point.lat:.4f}, {starting_point.lon:.4f})")
             
-            # Ottimizza il percorso
-            if optimization_method == 'genetic':
-                optimal_pois = self.optimizer.optimize_route_genetic(starting_point)
-            else:
-                optimal_pois = self.optimizer.optimize_route_greedy(starting_point)
+            # Ottimizza il percorso usando la strategia high_value
+            optimal_pois = self.optimizer.optimize_route_high_value(starting_point)
             
             # Calcola metriche del percorso
             distance, time, fee = self.optimizer.calculate_route_metrics(starting_point, optimal_pois)
@@ -422,7 +255,7 @@ class CompetitionSimulator:
     def print_competition_summary(self, day_routes: List[DayRoute]):
         """Stampa il riassunto della competizione"""
         print("\n" + "="*60)
-        print("RIASSUNTO COMPETIZIONE")
+        print("RIASSUNTO COMPETIZIONE (Strategia High Value)")
         print("="*60)
         
         total_fee = sum(route.total_fee_collected for route in day_routes)
@@ -458,8 +291,8 @@ class CompetitionSimulator:
             print(f"  {jurisdiction}: €{stats['fee']:.2f} totale, €{avg_fee:.2f} media/giorno")
 
 def main():
-    print("COMPETIZIONE ACCERTATORI SIAE")
-    print("="*50)
+    print("COMPETIZIONE ACCERTATORI SIAE (Strategia High Value)")
+    print("="*55)
     
     # Inizializza il simulatore
     simulator = CompetitionSimulator('dataset.csv')
@@ -471,12 +304,9 @@ def main():
         total_value = sum(poi.fee_value for poi in pois)
         print(f"  {jurisdiction}: {len(pois)} POIs, Valore totale: €{total_value:.2f}")
     
-    # Simula la competizione
-    print(f"\nInizio simulazione competizione...")
-    day_routes = simulator.simulate_inspector_competition(
-        num_days=5, 
-        optimization_method='greedy'  # Cambia in 'genetic' per algoritmo più sofisticato
-    )
+    # Simula la competizione usando la strategia high_value
+    print(f"\nInizio simulazione competizione con strategia High Value...")
+    day_routes = simulator.simulate_inspector_competition(num_days=5)
     
     # Stampa riassunto
     simulator.print_competition_summary(day_routes)
@@ -498,7 +328,7 @@ def main():
     
     results_df = pd.DataFrame(results_data)
     results_df.to_csv('competition_results.csv', index=False)
-    print(f"\n📄 Risultati salvati in 'competition_results.csv'")
+    print(f"\nRisultati salvati in 'competition_results.csv'")
 
 if __name__ == "__main__":
-    main() 
+    main()
