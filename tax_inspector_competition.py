@@ -58,7 +58,8 @@ class DistanceCalculator:
         Calcola il tempo di camminata in minuti
         Velocità media di camminata: 5 km/h
         """
-        return (distance_km / walking_speed_kmh) * 60
+        factor = 2 
+        return (distance_km / walking_speed_kmh) * 60 * factor
 
 class RouteOptimizer:
     """Ottimizza i percorsi utilizzando la strategia high_value"""
