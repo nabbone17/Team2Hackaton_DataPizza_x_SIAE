@@ -36,8 +36,7 @@ Il motore identifica i POI che soddisfano i criteri stabiliti. Da questi è poss
 ---
 
 ## Routing
-
-Per il calcolo del percorso viene utilizzato l’algoritmo `high_value`.
+Per il calcolo del percorso viene utilizzato l’algoritmo `high_value`. La distanza tra punti è ottenuta tramite formula Haversine; a partire da questa viene ricavato il tempo di percorrenza a piedi ad una velocità media di 5km/h. Il tempo di percorrenza trovato viene corretto con un fattore pari a 2 per adattarlo alla planimetria.
 
 ---
 
